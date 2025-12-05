@@ -63,3 +63,13 @@ class Announcement(Base):
     class_id = Column(Integer, ForeignKey('classes.id'), nullable=False)
     title = Column(String, nullable=False)
     content = Column(String, nullable=False)
+
+
+#marks table for students
+class Marks(Base):
+    __tablename__ = 'marks'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    student_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    exam_id = Column(Integer, ForeignKey('exams.id'), nullable=False)
+    total_marks = Column(Integer, nullable=False)
+    results = Column(JSONB, nullable=False)
