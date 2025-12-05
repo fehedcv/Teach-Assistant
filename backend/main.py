@@ -2,6 +2,7 @@ import uvicorn
 from dotenv import load_dotenv
 load_dotenv()
 import os
+from app.models import models
 #from app.core import firebase
 # Load environment variables from .env file
 
@@ -14,7 +15,8 @@ from fastapi import FastAPI
 import logging
 from sqlalchemy.exc import OperationalError
 #from app.db.base import Base
-#from app.db.session import engine
+from app.db.base import Base
+from app.db.session import engine
 #from app.api.v2 import router
 from fastapi.security import HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
