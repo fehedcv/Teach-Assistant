@@ -48,8 +48,7 @@ def get_question(question_id: int, db: Session = Depends(get_db)):
 @router.get("/exam/{exam_id}/pdf")
 def export_exam_to_pdf(exam_id: int, db: Session = Depends(get_db)):
     """
-    Generates a professionally structured Exam PDF with outlines, 
-    matching the style of standard Diploma/Engineering question papers.
+    Generates a structured Exam PDF with dynamic total marks calculation.
     """
     # Fetch Questions
     questions = db.query(Question).filter(Question.exam_id == exam_id).all()
@@ -61,24 +60,10 @@ def export_exam_to_pdf(exam_id: int, db: Session = Depends(get_db)):
     if not exam:
         raise HTTPException(status_code=404, detail="Exam not found")
     
-    # Use exam title (fallback to generic if empty, though assumed present)
     exam_title = exam.title if exam.title else f"Subject ID {exam_id}"
 
-    buffer = io.BytesIO()
-    p = canvas.Canvas(buffer, pagesize=A4)
-    width, height = A4
-
-    # --- Layout Constants ---
-    MARGIN_X = inch * 0.75
-    MARGIN_Y = inch * 0.75
-    CONTENT_WIDTH = width - (2 * MARGIN_X)
-    FONT_STD = "Helvetica"
-    FONT_BOLD = "Helvetica-Bold"
-    FONT_SIZE = 11
-    LINE_HEIGHT = 14
-
-    # --- Helper Functions ---
-
+    # --- 1. Pre-process Data & Calculate Marks ---
+    
     def normalize_to_list(data: Union[Dict, List, None]) -> List[Any]:
         """Safely converts single dicts or None into a list for iteration."""
         if not data:
@@ -86,6 +71,34 @@ def export_exam_to_pdf(exam_id: int, db: Session = Depends(get_db)):
         if isinstance(data, dict):
             return [data] if data else []
         return data
+
+    all_mcqs = []
+    all_short_questions = []  # Formerly 'one_mark'
+    all_long_questions = []   # Formerly 'three_mark'
+
+    for q in questions:
+        all_mcqs.extend(normalize_to_list(q.mcq))
+        all_short_questions.extend(normalize_to_list(q.one_mark))
+        all_long_questions.extend(normalize_to_list(q.three_mark))
+
+    # Calculate Total Marks based on user logic
+    # MCQ = 1 mark, Short (one_mark) = 3 marks, Long (three_mark) = 7 marks
+    total_marks = (len(all_mcqs) * 1) + (len(all_short_questions) * 3) + (len(all_long_questions) * 7)
+
+    # --- 2. PDF Generation Setup ---
+
+    buffer = io.BytesIO()
+    p = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+
+    # Layout Constants
+    MARGIN_X = inch * 0.75
+    MARGIN_Y = inch * 0.75
+    CONTENT_WIDTH = width - (2 * MARGIN_X)
+    FONT_STD = "Helvetica"
+    FONT_BOLD = "Helvetica-Bold"
+    FONT_SIZE = 11
+    LINE_HEIGHT = 14
 
     def draw_border():
         """Draws the outline box on the current page."""
@@ -97,11 +110,10 @@ def export_exam_to_pdf(exam_id: int, db: Session = Depends(get_db)):
         if y_pos < MARGIN_Y + required_space:
             p.showPage()
             draw_border()
-            # Optional: Add small continuation header
             p.setFont(FONT_STD, 9)
             p.drawRightString(width - MARGIN_X - 10, height - MARGIN_Y - 15, "(Page Cont.)")
             p.setFont(FONT_STD, FONT_SIZE)
-            return height - MARGIN_Y - 30  # Reset Y to top
+            return height - MARGIN_Y - 30
         return y_pos
 
     def draw_wrapped_text(text, x, y, max_w, font=FONT_STD, size=FONT_SIZE, line_height=None):
@@ -123,8 +135,8 @@ def export_exam_to_pdf(exam_id: int, db: Session = Depends(get_db)):
             y -= lh
         return check_page_break(y, 10)
 
-    # --- Draw Header Function ---
-    def draw_header(current_y):
+    def draw_header(current_y, calculated_marks):
+        """Draws the exam header with the dynamic total marks."""
         # Top Left: Code
         p.setFont(FONT_STD, 10)
         p.drawString(MARGIN_X + 10, current_y, f"TED (21)-1001 (Rev. 2021)")
@@ -147,7 +159,8 @@ def export_exam_to_pdf(exam_id: int, db: Session = Depends(get_db)):
         # Meta Info (Time / Marks)
         p.setFont(FONT_STD, 10)
         p.drawString(MARGIN_X + 10, current_y, "[Time: 3 Hours]")
-        p.drawRightString(width - MARGIN_X - 10, current_y, "(Maximum Marks: 75)")
+        # Dynamic Marks Display
+        p.drawRightString(width - MARGIN_X - 10, current_y, f"(Maximum Marks: {calculated_marks})")
         
         # Separator Line
         current_y -= 10
@@ -157,22 +170,14 @@ def export_exam_to_pdf(exam_id: int, db: Session = Depends(get_db)):
         
         return current_y
 
-    # --- Start PDF Generation ---
+    # --- 3. Start Drawing ---
+    
     draw_border()
     y = height - MARGIN_Y - 20
-    y = draw_header(y)
+    # Pass total_marks to header
+    y = draw_header(y, total_marks)
 
-    # Organize Questions by Type (PART A, B, C structure)
-    all_mcqs = []
-    all_onemarks = []
-    all_threemarks = []
-
-    for q in questions:
-        all_mcqs.extend(normalize_to_list(q.mcq))
-        all_onemarks.extend(normalize_to_list(q.one_mark))
-        all_threemarks.extend(normalize_to_list(q.three_mark))
-
-    # --- PART A: MCQ ---
+    # --- PART A: MCQ (1 Mark) ---
     if all_mcqs:
         p.setFont(FONT_BOLD, 12)
         p.drawCentredString(width / 2, y, "PART - A")
@@ -187,8 +192,8 @@ def export_exam_to_pdf(exam_id: int, db: Session = Depends(get_db)):
             
             if isinstance(mcq, dict):
                 options = mcq.get("options", [])
-                # Print options in a single line if short, or stacked
                 opt_str = "    ".join(options)
+                # Check if options fit on one line
                 if stringWidth(opt_str, FONT_STD, 10) < (CONTENT_WIDTH - 40):
                      y = draw_wrapped_text(opt_str, MARGIN_X + 40, y, CONTENT_WIDTH - 50, size=10)
                 else:
@@ -197,33 +202,35 @@ def export_exam_to_pdf(exam_id: int, db: Session = Depends(get_db)):
             y -= 5
         y -= 15
 
-    # --- PART B: One Mark / Short Answer ---
-    if all_onemarks:
+    # --- PART B: Short Questions (3 Marks) ---
+    if all_short_questions:
         y = check_page_break(y, 60)
         p.setFont(FONT_BOLD, 12)
         p.drawCentredString(width / 2, y, "PART - B")
         y -= 20
         p.setFont(FONT_STD, 10)
-        y = draw_wrapped_text("II. Answer the following questions in one or two sentences.", MARGIN_X + 10, y, CONTENT_WIDTH)
+        # Updated text for 3 marks
+        y = draw_wrapped_text("II. Answer the following questions. (3 Marks each)", MARGIN_X + 10, y, CONTENT_WIDTH)
         y -= 10
         
-        for i, om in enumerate(all_onemarks):
+        for i, om in enumerate(all_short_questions):
             text = om.get("question", "") if isinstance(om, dict) else str(om)
             y = draw_wrapped_text(f"{i+1}. {text}", MARGIN_X + 20, y, CONTENT_WIDTH - 30)
             y -= 10
         y -= 15
 
-    # --- PART C: Three Mark / Descriptive ---
-    if all_threemarks:
+    # --- PART C: Long Questions (7 Marks) ---
+    if all_long_questions:
         y = check_page_break(y, 60)
         p.setFont(FONT_BOLD, 12)
         p.drawCentredString(width / 2, y, "PART - C")
         y -= 20
         p.setFont(FONT_STD, 10)
-        y = draw_wrapped_text("III. Answer the following questions in detail. (3 Marks each)", MARGIN_X + 10, y, CONTENT_WIDTH)
+        # Updated text for 7 marks
+        y = draw_wrapped_text("III. Answer the following questions in detail. (7 Marks each)", MARGIN_X + 10, y, CONTENT_WIDTH)
         y -= 10
         
-        for i, tm in enumerate(all_threemarks):
+        for i, tm in enumerate(all_long_questions):
             text = tm.get("question", "") if isinstance(tm, dict) else str(tm)
             y = draw_wrapped_text(f"{i+1}. {text}", MARGIN_X + 20, y, CONTENT_WIDTH - 30)
             y -= 20
