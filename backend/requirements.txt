@@ -5,5 +5,4 @@ pydantic
 python-dotenv
 httpx
 sqlalchemy
-psychopg2-binary
 pg8000
