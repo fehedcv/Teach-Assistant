@@ -5,10 +5,10 @@ from sqlalchemy.orm import Session
 import io
 
 # --- ReportLab Imports ---
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-from reportlab.lib.units import inch
-from reportlab.pdfbase.pdfmetrics import stringWidth
+from reportlab.lib.pagesizes import A4 # type: ignore
+from reportlab.pdfgen import canvas # pyright: ignore[reportMissingModuleSource]
+from reportlab.lib.units import inch # type: ignore
+from reportlab.pdfbase.pdfmetrics import stringWidth # type: ignore
 
 # --- App Imports (Adjust paths as per your project structure) ---
 # Assuming these exist based on your snippet

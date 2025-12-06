@@ -3,7 +3,10 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.models import *
 from app.schemas.exams import *
+from app.models.models import Student
 import uuid
+
+from app.schemas.marks import ExamStatsResponse, MarksResponse, MarksSummaryResponse
 
 router = APIRouter(prefix="/api/v1/exams", tags=["exams"])
 
@@ -101,10 +104,9 @@ def submit_exam(exam_id: int, payload: ExamSubmitRequest, db: Session = Depends(
     
 @router.post("/{exam_id}/grade", response_model=ExamGradeResponse)
 def grade_exam(exam_id: int, payload: ExamGradeRequest, db: Session = Depends(get_db)):
-    # Fetch all responses for this submission_id
     responses = db.query(StudentResponse).filter(
         StudentResponse.exam_id == exam_id,
-        StudentResponse.id == payload.submission_id
+        StudentResponse.student_id == payload.student_id  # use student_id instead of submission_id
     ).all()
 
     if not responses:
@@ -122,7 +124,6 @@ def grade_exam(exam_id: int, payload: ExamGradeRequest, db: Session = Depends(ge
         if question.answer and resp.response.strip().lower() == question.answer.strip().lower():
             marks_obtained = question.marks
 
-        # Update marks in DB
         resp.marks_obtained = marks_obtained
         db.add(resp)
         db.commit()
@@ -135,35 +136,62 @@ def grade_exam(exam_id: int, payload: ExamGradeRequest, db: Session = Depends(ge
             "marks_obtained": marks_obtained
         })
 
+    # 🔑 Insert or update Marks record
+    marks_record = db.query(Marks).filter(
+        Marks.exam_id == exam_id,
+        Marks.student_id == payload.student_id
+    ).first()
+
+    if marks_record:
+        marks_record.total_marks = total_marks
+    else:
+        marks_record = Marks(
+            student_id=payload.student_id,
+            exam_id=exam_id,
+            total_marks=total_marks,
+            max_marks=sum(q.marks for q in db.query(Question).filter(Question.exam_id == exam_id).all())
+        )
+        db.add(marks_record)
+
+    db.commit()
+    db.refresh(marks_record)
+
     return ExamGradeResponse(
         submission_id=payload.submission_id,
         total_marks=total_marks,
         graded=True,
         details=details
     )
+
     
-@router.get("/{exam_id}/results", response_model=ExamResultsResponse)
-def get_exam_results(exam_id: int, db: Session = Depends(get_db)):
-    responses = db.query(StudentResponse).filter(StudentResponse.exam_id == exam_id).all()
+@router.get("/{exam_id}/student/{student_id}", response_model=MarksSummaryResponse)
+def get_exam_results(exam_id: int, student_id: int, db: Session = Depends(get_db)):
+    record = (
+        db.query(Marks)
+        .filter(Marks.exam_id == exam_id, Marks.student_id == student_id)
+        .first()
+    )
 
-    if not responses:
-        raise HTTPException(status_code=404, detail="No results found for this exam")
+    if not record:
+        raise HTTPException(status_code=404, detail="No results found for this exam/student")
 
-    results = [
-        ExamResultDetail(
-            student_id=resp.student_id,
-            question_id=resp.question_id,
-            response=resp.response,
-            marks_obtained=resp.marks_obtained if resp.marks_obtained is not None else 0
-        )
-        for resp in responses
+    # Extract only the fields you want from results JSON
+    filtered_results = [
+        {
+            "feedback": r.get("feedback"),
+            "correct_answer": r.get("correct_answer"),
+            "student_answer": r.get("student_answer"),
+            "is_correct": r.get("is_correct"),
+        }
+        for r in record.results
     ]
 
-    return ExamResultsResponse(
-        exam_id=exam_id,
-        results=results
-    )
-    
+    return {
+        "total_marks": record.total_marks,
+        "results": filtered_results
+    }
+
+
 
 # 2. Download exam (HTML template)
 @router.get("/{exam_id}/download", response_model=ExamDownloadResponse)
@@ -209,3 +237,27 @@ def start_exam_session(exam_id: int, db: Session = Depends(get_db)):
         session_token=session_token,
         link=link
     )
+    
+@router.get("/{exam_id}/stats", response_model=ExamStatsResponse)
+def get_exam_stats(exam_id: int, db: Session = Depends(get_db)):
+    records = db.query(Marks).filter(Marks.exam_id == exam_id).all()
+
+    if not records:
+        raise HTTPException(status_code=404, detail="No students attended this exam")
+
+    stats = []
+    for rec in records:
+        student = db.query(Student).filter(Student.id == rec.student_id).first()
+        student_name = student.name if student else f"Student {rec.student_id}"
+
+        stats.append({
+            "student_id": rec.student_id,
+            "name": student_name,
+            "total_marks": rec.total_marks,
+            "max_marks": rec.max_marks
+        })
+
+    return {
+        "exam_id": exam_id,
+        "stats": stats
+    }
