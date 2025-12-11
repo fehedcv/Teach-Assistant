@@ -247,7 +247,7 @@ def get_exam_stats(exam_id: int, db: Session = Depends(get_db)):
 
     stats = []
     for rec in records:
-        student = db.query(Student).filter(Student.id == rec.student_id).first()
+        student = db.query(User).filter(User.id == rec.student_id).first()
         student_name = student.name if student else f"Student {rec.student_id}"
 
         stats.append({
